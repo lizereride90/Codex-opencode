@@ -161,7 +161,9 @@ jobs:
           MOBILE_CODEX_SIGNING_JSON: ${{ secrets.MOBILE_CODEX_SIGNING_JSON }}
         run: python3 tools/sign_ci_apk.py --build-tools "$ANDROID_HOME/build-tools/35.0.0"
       - name: Prepare verified update assets
-        if: github.event_name != 'pull_request' || env.PRIVATE_TEST_PR == 'true'
+        if: (github.event_name != 'pull_request' || env.PRIVATE_TEST_PR == 'true') && env.MOBILE_CODEX_SIGNING_JSON != ''
+        env:
+          MOBILE_CODEX_SIGNING_JSON: ${{ secrets.MOBILE_CODEX_SIGNING_JSON }}
         run: python3 tools/prepare_update_release.py --build-tools "$ANDROID_HOME/build-tools/35.0.0"
       - name: Collect corresponding tool sources on cache miss
         if: (github.event_name != 'pull_request' || env.PRIVATE_TEST_PR == 'true') && steps.sources.outputs.cache-hit != 'true'
