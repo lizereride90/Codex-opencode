@@ -30,23 +30,23 @@
     {
       "architecture": "all",
       "depends": "",
-      "filename": "pool/main/c/ca-certificates/ca-certificates_1:2026.08.13_all.deb",
+      "filename": "pool/main/c/ca-certificates/ca-certificates_1:2026.09.25_all.deb",
       "homepage": "https://curl.se/docs/caextract.html",
       "license": "MPL-2.0",
       "name": "ca-certificates",
       "recipe": "https://github.com/termux/termux-packages/blob/40a00dd69107b62d7c9cc71109b3c8fab9802b07/packages/ca-certificates/build.sh",
-      "recipeVersion": "1:2026.08.13",
+      "recipeVersion": "1:2026.09.25",
       "recipeVersionMatches": true,
-      "sha256": "8e894fb885da738b4ca9a7932703e414d730fa32e78aba33046a747822547d5a",
+      "sha256": "57fab24bf4561bfdd35afe71bc1929914e51c35458cfd1fca2b15e54bc8df7af",
       "size": 105404,
       "sourceArchiveStatus": "complete",
       "sources": [
         {
-          "sha256": "f66dff1bdf8f96060b8177976f8b7d9254bc89bc4db933d769f7384d28480bc9",
-          "url": "https://curl.se/ca/cacert-2026-08-13.pem"
+          "sha256": "a41b5d356aea97a529fe27e0f7316d2f9d946d75927476cf9cf1b90637d00505",
+          "url": "https://curl.se/ca/cacert-2026-09-25.pem"
         }
       ],
-      "version": "1:2026.08.13"
+      "version": "1:2026.09.25"
     },
     {
       "architecture": "aarch64",
