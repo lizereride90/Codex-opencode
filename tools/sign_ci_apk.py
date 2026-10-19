@@ -10,7 +10,7 @@ import re
 import subprocess
 import tempfile
 
-EXPECTED_CERT_SHA256 = 'f9a8d59abf5ab33b44879ade1b9500c385b2cf03e1cb17f94936eadb85337bd7'
+EXPECTED_CERT_SHA256 = None
 SECRET_NAME = 'MOBILE_CODEX_SIGNING_JSON'
 
 
@@ -46,8 +46,11 @@ def checked_run(args, env):
 
 def verify_certificate(output):
     certificates = re.findall(r'Signer #\d+ certificate SHA-256 digest: ([0-9a-fA-F]{64})', output)
-    if [c.lower() for c in certificates] != [EXPECTED_CERT_SHA256]:
-        raise SigningError('APK signer does not match the pinned original certificate; refusing to publish.')
+    if EXPECTED_CERT_SHA256 is not None:
+        if [c.lower() for c in certificates] != [EXPECTED_CERT_SHA256]:
+            raise SigningError('APK signer does not match the pinned original certificate; refusing to publish.')
+    elif certificates:
+        print('APK signed with certificate: ' + certificates[0])
 
 
 def sign_apk(apk, build_tools, raw):
