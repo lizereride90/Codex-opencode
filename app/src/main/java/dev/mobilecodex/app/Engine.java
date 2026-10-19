@@ -2473,7 +2473,20 @@ public final class Engine {
                 next.put(created);
                 continue;
             }
-            if (change.has("model")) agent.put("model", change.optString("model"));
+            // The same agent invited again with another model becomes a separate participant.
+            if (change.has("model")) {
+                String nextModel = change.optString("model");
+                if (!nextModel.equals(agent.optString("model"))) {
+                    JSONObject created = AgentGroup.newAgent(id, nextModel, agent.optString("effort"), agent.optString("mode"));
+                    created.put("approvalMode", agent.optString("approvalMode", "ask"));
+                    created.put("opencodeAgent", agent.optString("opencodeAgent"));
+                    String character = agent.optString("character");
+                    if (!character.isBlank()) created.put("character", character);
+                    next.put(created);
+                } else {
+                    agent.put("model", nextModel);
+                }
+            }
             if (change.has("effort")) agent.put("effort", change.optString("effort"));
             if (!mode.isEmpty()) agent.put("mode", mode);
             if (change.has("approvalMode")) agent.put("approvalMode", approval);

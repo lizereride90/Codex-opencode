@@ -161,27 +161,37 @@
 
     // ---- Invite sheet -----------------------------------------------------------------
     const picks = new Map();
+    function pickKey(id, model) { return id + '::' + String(model || ''); }
+    function agentModelKey(agent) { return pickKey(agent.id, agent.model); }
     function renderInvite() {
-      const joined = new Set(agents().map(a => a.id)), workspace = getState().workspace;
+      const joined = new Set(), workspace = getState().workspace;
+      for (const a of agents()) { joined.add(a.id); if (a.model) joined.add(pickKey(a.id, a.model)); }
       const signature = JSON.stringify([catalog, [...joined], [...picks], workspace?.selected, !!providerCheck]);
       if (signature === inviteSignature) return; inviteSignature = signature;
-      const rows = AGENTS.map(agent => {
-        const info = cap(agent.id), ready = info.state === 'ready', inside = joined.has(agent.id), pick = picks.get(agent.id);
-        const row = el('div', null, 'invite-row'); row.dataset.agent = agent.id;
-        const check = el('input'); check.type = 'checkbox'; check.id = 'invite-' + agent.id; check.checked = inside || !!pick; check.disabled = inside || !ready;
-        check.onchange = () => { if (check.checked) picks.set(agent.id, {mode:workspace?.selected ? 'read' : 'chat'}); else picks.delete(agent.id); renderInvite(); };
-        const label = el('label', null, 'invite-label'); label.htmlFor = check.id;
-        const copy = el('span', null, 'agent-copy');
-        copy.append(el('strong', agent.name), el('small', inside ? t('대화에 참여 중') : ready ? (defaultsFor(agent.id).model || t('모델 목록 조회 필요')) : t(providerCheck && !info.state ? '상태 확인 중…' : PROVIDER_STATE[info.state] || '확인 전')));
-        label.append(check, avatar(agent.id, agent.name), copy); row.append(label);
-        if (!ready && !inside) row.append(btn(t('계정 연결'), () => { close('invite-dialog'); openAccounts(); }, 'secondary-button invite-connect'));
-        if (pick) {
-          const mode = select(MODES.map(m => ({id:m.id, label:t(m.label)})), pick.mode, agent.name + ' ' + t('권한'));
-          mode.onchange = () => { pick.mode = mode.value; };
-          row.append(field(t('권한'), mode));
-          if (pick.mode !== 'chat' && !workspace?.selected) row.append(el('p', t('작업 폴더를 선택해야 파일 권한을 쓸 수 있습니다.'), 'agent-warning'));
-        }
-        return row;
+      const rows = AGENTS.flatMap(agent => {
+        const info = cap(agent.id), ready = info.state === 'ready', models = info.models || [];
+        const buildRow = (model, index) => {
+          const id = agent.id, key = pickKey(id, model && model.id), inside = joined.has(key), pick = picks.get(key);
+          const row = el('div', null, 'invite-row'); row.dataset.agent = id;
+          const check = el('input'); check.type = 'checkbox'; check.id = 'invite-' + key; check.checked = inside || !!pick;
+          check.disabled = inside || !ready || !model;
+          check.onchange = () => { if (check.checked) picks.set(key, {id, model: model && model.id, mode: workspace?.selected ? 'read' : 'chat'}); else picks.delete(key); renderInvite(); };
+          const label = el('label', null, 'invite-label'); label.htmlFor = check.id;
+          const name = el('strong', agent.name);
+          const small = el('small', inside ? t('대화에 참여 중') : model ? model.id : t(providerCheck && !info.state ? '상태 확인 중…' : PROVIDER_STATE[info.state] || '확인 전'));
+          const copy = el('span', null, 'agent-copy'); copy.append(name, small); label.append(check, avatar(id, agent.name), copy); row.append(label);
+          if (models.length > 1 && model) row.append(el('small', model.label || model.id, 'muted model-tag'));
+          if (!ready && !inside) row.append(btn(t('계정 연결'), () => { close('invite-dialog'); openAccounts(); }, 'secondary-button invite-connect'));
+          if (pick && model) {
+            const mode = select(MODES.map(m => ({id:m.id, label:t(m.label)})), pick.mode, agent.name + ' ' + t('권한'));
+            mode.onchange = () => { pick.mode = mode.value; };
+            row.append(field(t('권한'), mode));
+            if (pick.mode !== 'chat' && !workspace?.selected) row.append(el('p', t('작업 폴더를 선택해야 파일 권한을 쓸 수 있습니다.'), 'agent-warning'));
+          }
+          return row;
+        };
+        if (ready && models.length) return models.map(buildRow);
+        return [buildRow(null, 0)];
       });
       $('invite-list').replaceChildren(...rows);
       $('invite-confirm').disabled = !picks.size;
@@ -193,10 +203,19 @@
       await refreshProviders(); inviteSignature = ''; renderInvite();
     }
     async function confirmInvite() {
-      const changes = [...picks].map(([id, pick]) => ({id, ...defaultsFor(id), mode:pick.mode, enabled:true}));
+      const inside = agents().map(a => ({id: a.id, model: a.model}));
+      const changes = [...picks].map(([key, pick]) => {
+        const [id, model] = key.split('::');
+        const info = cap(id), modelObj = info.models?.find(m => m.id === model) || {};
+        const efforts = modelObj.efforts || [];
+        const effort = efforts.includes(modelObj.defaultEffort) ? modelObj.defaultEffort : efforts[0] || '';
+        return {id, model: model || '', effort, mode: pick.mode, enabled: true};
+      }).filter((change, index, all) =>
+        all.findIndex(other => other.id === change.id && other.model === change.model) === index &&
+        !inside.some(a => a.id === change.id && a.model === change.model));
       if (!changes.length) return;
       $('invite-confirm').disabled = true;
-      try { await setAgents(changes); close('invite-dialog'); toast(t('{names} 님을 대화에 초대했습니다.', {names:changes.map(c => AGENTS.find(a => a.id === c.id).name).join(', ')})); }
+      try { await setAgents(changes); close('invite-dialog'); toast(t('{names} 님을 대화에 초대했습니다.', {names:changes.map(c => AGENTS.find(a => a.id === c.id).name + (c.model ? ' · ' + c.model : '')).join(', ')})); }
       finally { $('invite-confirm').disabled = !picks.size; }
     }
 

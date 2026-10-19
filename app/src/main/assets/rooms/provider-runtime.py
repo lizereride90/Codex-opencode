@@ -217,6 +217,11 @@ def arguments(provider, binary, config):
         if agent: args += ['--agent', agent]
         # --auto auto-approves what opencode can; every mobile_* tool still routes
         # through the Android host's per-turn approval inside mobile-mcp.py.
+    elif provider == 'agy':
+        args = [binary, '--input-format', 'stream-json', '--output-format', 'stream-json',
+                '--agent', 'mobile-room', '--disable-slash-commands']
+        if config.get('sessionId'):
+            args += ['--conversation', config['sessionId']]
     if provider != 'opencode':
         if config.get('model'):
             args += ['--model', config.get('model')]
