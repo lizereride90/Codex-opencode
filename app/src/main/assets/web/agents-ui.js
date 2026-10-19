@@ -162,7 +162,10 @@
     // ---- Invite sheet -----------------------------------------------------------------
     const picks = new Map();
     function pickKey(id, model) { return id + '::' + String(model || ''); }
-    function agentModelKey(agent) { return pickKey(agent.id, agent.model); }
+    function domIdFor(id, model) {
+      const key = pickKey(id, model), def = defaultsFor(id).model || '';
+      return key === pickKey(id, def) ? 'invite-' + id : 'invite-' + key;
+    }
     function renderInvite() {
       const joined = new Set(), workspace = getState().workspace;
       for (const a of agents()) { joined.add(a.id); if (a.model) joined.add(pickKey(a.id, a.model)); }
@@ -173,7 +176,7 @@
         const buildRow = (model, index) => {
           const id = agent.id, key = pickKey(id, model && model.id), inside = joined.has(key), pick = picks.get(key);
           const row = el('div', null, 'invite-row'); row.dataset.agent = id;
-          const check = el('input'); check.type = 'checkbox'; check.id = 'invite-' + key; check.checked = inside || !!pick;
+          const check = el('input'); check.type = 'checkbox'; check.id = domIdFor(id, model && model.id); check.checked = inside || !!pick;
           check.disabled = inside || !ready || !model;
           check.onchange = () => { if (check.checked) picks.set(key, {id, model: model && model.id, mode: workspace?.selected ? 'read' : 'chat'}); else picks.delete(key); renderInvite(); };
           const label = el('label', null, 'invite-label'); label.htmlFor = check.id;
