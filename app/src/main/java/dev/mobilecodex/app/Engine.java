@@ -98,8 +98,8 @@ public final class Engine {
 
     private void holdWorkLock() {
         if (workLock == null) {
-            workLock = (PowerManager.WakeLock) context.getSystemService(Context.POWER_SERVICE)
-                .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MobileCodex:work");
+            PowerManager pm = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+            workLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MobileCodex:work");
             workLock.setReferenceCounted(false);
         }
         workLock.acquire();
@@ -2642,6 +2642,17 @@ public final class Engine {
         if (AgentGroup.indexOf(messages, turn.message.optString("id")) >= 0) return false;
         messages.put(turn.message); return true;
     }
+    /** Appends a live "what the agent is doing" line (step command or thinking) to the turn bubble. */
+    private void agentLine(JSONObject owner, GroupRun run, AgentTurn turn, boolean thinking, String text) throws Exception {
+        if (text.isEmpty()) return;
+        turn.status = "working";
+        String line = thinking ? (turn.thinkingOpen ? text : "\n\n… " + text) : "\n\n" + text;
+        turn.thinkingOpen = thinking;
+        JSONObject message = turn.message;
+        message.put("text", message.optString("text") + line);
+        if (appendAgentMessage(owner, turn)) { persist(); publish(); }
+        else if (run.local.equals(threadId)) event("message.delta", obj("threadId", run.local, "id", message.optString("id"), "delta", line));
+    }
     private void agentRunEvent(JSONObject data) {
         GroupRun run = group;
         AgentTurn turn = run == null ? null : run.active.get(data.optString("runId"));
@@ -2656,18 +2667,8 @@ public final class Engine {
                     turn.thinkingOpen = false;
                     publish();
                 }
-                case "step":
-                case "thinking" -> {
-                    String delta = data.optString("text"); if (delta.isEmpty()) return;
-                    turn.status = "working";
-                    String line = "thinking".equals(data.optString("kind"))
-                        ? (turn.thinkingOpen ? delta : "\n\n… " + delta)
-                        : "\n\n" + delta;
-                    turn.thinkingOpen = "thinking".equals(data.optString("kind"));
-                    message.put("text", message.optString("text") + line);
-                    if (appendAgentMessage(owner, turn)) { persist(); publish(); }
-                    else if (run.local.equals(threadId)) event("message.delta", obj("threadId", run.local, "id", message.optString("id"), "delta", line));
-                }
+                case "step" -> agentLine(owner, run, turn, false, data.optString("text"));
+                case "thinking" -> agentLine(owner, run, turn, true, data.optString("text"));
                 case "delta" -> {
                     turn.thinkingOpen = false;
                     String delta = data.optString("text"); if (delta.isEmpty()) return;
