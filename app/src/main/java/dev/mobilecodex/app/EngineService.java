@@ -24,7 +24,7 @@ public final class EngineService extends Service {
             ((MobileCodexApp) getApplication()).engine().stop();
             stopSelf();
         }
-        return START_NOT_STICKY;
+        return START_STICKY;
     }
     @Override public void onDestroy() {
         // Explicit stop requests own process shutdown. A stale service callback must

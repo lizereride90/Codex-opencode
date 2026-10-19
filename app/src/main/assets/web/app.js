@@ -2220,6 +2220,8 @@
    const closeToolMenu = () => { if ($('tool-menu-dialog').open) close('tool-menu-dialog'); };
    setFilePanelOpen(false);
    ['files-toggle'].forEach(id => on(id, async () => { closeToolMenu(); setFilePanelOpen($('file-panel').hidden); sidebar(false); if (!$('file-panel').hidden) await listFiles(); }));
+  on('chat-terminal', async () => { const d = $('terminal-dialog'); d.classList.add('terminal-fullscreen'); closeToolMenu(); show('terminal-dialog'); sidebar(false); renderTerminal(await call('terminal.state')); });
+  on('terminal-back', () => { const d = $('terminal-dialog'); d.classList.remove('terminal-fullscreen'); close('terminal-dialog'); });
   on('file-close', () => setFilePanelOpen(false)); on('file-up', async () => { folder = C.parent(folder); await listFiles(); });
   on('file-query', () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => listFiles($('file-query').value.trim()).catch(e => toast(e.message)), 300); }, 'input');
   ['file-new', 'folder-new'].forEach(id => on(id, async () => { const context = fileContext(), destination = folder; const name = await fileInput(context, id === 'file-new' ? t('새 파일') : t('새 폴더'), t('이름을 입력하세요.')); if (name) await mutate(id === 'file-new' ? 'mobile_create' : 'mobile_mkdir', {path:C.join(destination, name), content:''}, context); }));
@@ -2405,7 +2407,7 @@
     terminalControls();
   }
   on('show-recovery', () => { closeToolMenu(); return recovery(); });
-  on('show-terminal', async () => { closeToolMenu(); show('terminal-dialog'); sidebar(false); renderTerminal(await call('terminal.state')); });
+  on('show-terminal', async () => { const d = $('terminal-dialog'); d.classList.remove('terminal-fullscreen'); closeToolMenu(); show('terminal-dialog'); sidebar(false); renderTerminal(await call('terminal.state')); });
   on('terminal-stop', async () => { renderTerminal(await call('terminal.stop', {id:terminalState.id})); });
   on('terminal-form', async e => {
     e.preventDefault();

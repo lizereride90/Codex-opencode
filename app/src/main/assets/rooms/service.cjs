@@ -12,7 +12,7 @@ const host=(method,params)=>new Promise((resolve,reject)=>{
   write({id,method:'host.'+method,params});
 });
 const root=process.argv[2];
-const providers={claude:new CliProvider('claude',{root,host,emit}),agy:new CliProvider('agy',{root,host,emit})};
+const providers={claude:new CliProvider('claude',{root,host,emit}),agy:new CliProvider('agy',{root,host,emit}),opencode:new CliProvider('opencode',{root,host,emit})};
 const runs=new Map();
 
 function start(p) {
@@ -22,7 +22,7 @@ function start(p) {
   const prompt=String(p.prompt||'');if(!prompt||prompt.length>200000)throw new Error('에이전트에게 보낼 문맥이 비어 있거나 너무 깁니다.');
   // The CLI provider calls this pair a room and a member; here the room is one chat.
   const room={id:p.sessionId,runId,mode:p.mode||'chat',projectKey:p.projectKey||''};
-  const member={id:p.memberId,model:String(p.model||''),effort:String(p.effort||''),approvalMode:p.approvalMode||'ask',session:{id:String(p.nativeSession||'')}};
+  const member={id:p.memberId,model:String(p.model||''),effort:String(p.effort||''),approvalMode:p.approvalMode||'ask',opencodeAgent:String(p.opencodeAgent||''),session:{id:String(p.nativeSession||'')}};
   const controller=new AbortController(),signal=controller.signal;let text='';
   const send=(kind,data={})=>emit('agents.event',{runId,kind,...data});
   runs.set(runId,controller);
@@ -33,6 +33,8 @@ function start(p) {
       approve:async(title,detail)=>{if(signal.aborted)return false;const r=await host('approve',{runId,sessionId:room.id,memberId:member.id,title,detail});return r.allow===true;},
       event:e=>{if(signal.aborted)return;
         if(e.kind==='session')send('session',{id:e.id});
+        if(e.kind==='step')send('step',{text:String(e.text||'').slice(0,4000)});
+        if(e.kind==='thinking')send('thinking',{text:String(e.text||'').slice(0,4000)});
         if(e.kind==='delta'){const delta=String(e.text||'');if(text.length+delta.length>1000000){controller.abort();return;}text+=delta;send('delta',{text:delta});}
         if(e.kind==='status')send('status',{status:e.status||'working'});}});
     if(signal.aborted)throw new Error('발언이 중지되었습니다.');

@@ -5,6 +5,7 @@
   const AGENTS = [
     {id:'claude', provider:'claude', name:'Claude', account:'Claude Code'},
     {id:'gemini', provider:'agy', name:'Gemini', account:'Antigravity (Gemini)'},
+    {id:'opencode', provider:'opencode', name:'OpenCode', account:'OpenCode'},
   ];
   const EFFORTS = {none:'None', minimal:'Minimal', low:'Light', medium:'Medium', high:'High', xhigh:'Extra High', max:'Max', ultra:'Ultra'};
   const MODES = [{id:'chat', label:'대화만'}, {id:'read', label:'프로젝트 읽기'}, {id:'write', label:'프로젝트 수정'}];
@@ -92,6 +93,12 @@
       const effort = select(effortOptions(values, agent.provider === 'agy' ? '모델별 설정에 포함' : chosen?.effortSupported === false ? '추론 강도 조절 미지원' : '추론 설정 정보 없음'), agent.effort, agent.name + ' ' + t('추론'));
       effort.disabled = !values.length;
       const mode = select(MODES.map(m => ({id:m.id, label:t(m.label)})), agent.mode || 'chat', agent.name + ' ' + t('권한'));
+      const opencodeAgents = agent.provider === 'opencode' && Array.isArray(info.agents) ? info.agents : [];
+      if (opencodeAgents.length) {
+        const subagent = select(opencodeAgents.map(a => ({id:a.id, label:a.name || a.id})), agent.opencodeAgent || '', agent.name + ' ' + t('에이전트'));
+        subagent.onchange = () => setAgents([{id:agent.id, opencodeAgent:subagent.value}]);
+        box.append(field(t('에이전트'), subagent));
+      }
       const approvalOptions = [{id:'ask', label:t('승인 받기')}];
       if (agent.provider === 'claude' && info.state === 'ready' && info.nativeAutoReview && !info.autoReviewUnavailableModels?.includes(agent.model))
         approvalOptions.push({id:'auto-review', label:t('자동 검토')});
@@ -194,7 +201,7 @@
     }
 
     // ---- Account cards and CLI setup (Settings → Account) ------------------------------
-    const providerIds = ['claude', 'agy'];
+    const providerIds = ['claude', 'agy', 'opencode'];
     function setupState(id) { if (!setupStates.has(id)) setupStates.set(id, {running:false, text:'', action:'login'}); return setupStates.get(id); }
     /** Claude's /usage rows are English sentences; name the common ones in the app's language. */
     function usageLabel(label) {
@@ -242,7 +249,7 @@
         card.append(heading, detail, usage, actions); container.append(card); accountCards.set(id, {status:state, detail, login, install, refresh, usage});
       }
       const prerequisite = el('div', null, 'provider-account-prerequisite');
-      prerequisite.append(el('p', t('Claude Code·Antigravity는 앱 내 Linux 환경 설치 및 활성화가 필요합니다.'), 'muted'), btn(t('Linux 환경 설정'), openLinuxSettings));
+        prerequisite.append(el('p', t('Claude Code·Antigravity·OpenCode는 앱 내 Linux 환경 설치 및 활성화가 필요합니다.'), 'muted'), btn(t('Linux 환경 설정'), openLinuxSettings));
       container.append(prerequisite); renderAccounts();
     }
     function setupDialog(label) {

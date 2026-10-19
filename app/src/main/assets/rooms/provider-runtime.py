@@ -55,10 +55,12 @@ def probe(provider, binary, env):
         return {'state': 'unavailable', 'auth': 'unknown', 'reason': 'CLI 실행 실패. Linux 라이브러리와 설치 상태를 확인해 주세요.', 'models': []}
     code, help_out, help_err = capture([binary, '--help'], env)
     help_text = help_out + '\n' + help_err  # agy prints its usage to stderr
-    required = ['--input-format', '--output-format', '--resume' if provider == 'claude' else '--conversation']
+    required = {'claude':['--input-format','--output-format','--resume'],
+                'agy':['--input-format','--output-format','--conversation'],
+                'opencode':['--session','--format','--agent']}[provider]
     if any(flag not in help_text for flag in required):
         return {'state': 'unsupported', 'auth': 'unknown', 'version': version.strip(), 'reason': '세션 스트리밍을 지원하는 CLI로 업데이트해 주세요.', 'models': []}
-    models, usage = [], []
+    models, usage, agents = [], [], []
     if provider == 'claude':
         code, auth, _ = capture([binary, 'auth', 'status'], env)
         try:
@@ -76,6 +78,18 @@ def probe(provider, binary, env):
             # /usage is a local command: it reports plan limits without sending a prompt.
             code, report, _ = capture([binary, '-p', '/usage'], env, timeout=60)
             usage = parse_claude_usage(report) if code == 0 else []
+    elif provider == 'opencode':
+        # OpenCode lists every provider/model slug it knows.
+        code, listing, _ = capture([binary, 'models'], env)
+        if code == 0:
+            for line in listing.splitlines():
+                line = line.strip()
+                if line and SAFE.fullmatch(line.split()[0]):
+                    models.append({'id': line.split()[0], 'label': line, 'efforts': []})
+        auth_file = Path(env['HOME']) / '.local/share/opencode/auth.json'
+        authenticated = auth_file.exists() and bool(auth_file.read_text(encoding='utf-8').strip())
+        usage = []
+        agents = opencode_agents(binary, env)
     else:
         code, listing, _ = capture([binary, 'models'], env)
         if code == 0:
@@ -89,9 +103,33 @@ def probe(provider, binary, env):
     return {'state': 'ready' if authenticated else 'login_required', 'auth': 'signed_in' if authenticated else 'signed_out',
             'version': version.strip()[:150], 'models': models, 'transport': 'app-linux',
             'usage': usage if authenticated else [],
+            'agents': agents,
             'reason': '' if authenticated else '로그인을 눌러 CLI 계정 연결을 완료해 주세요.',
             'nativeAutoReview': supports_auto_review(provider, help_text),
             'nativeApproval': False, 'approval': 'mobile-mcp', 'resume': True, 'streaming': True}
+
+def opencode_agents(binary, env):
+    # Agents listed by `opencode agent list`, plus custom agents from
+    # ~/.config/opencode/agents/*.md (name from YAML frontmatter).
+    found = []
+    code, listing, _ = capture([binary, 'agent', 'list'], env, timeout=30)
+    if code == 0:
+        for line in listing.splitlines():
+            match = re.match(r'^\s*([A-Za-z0-9][A-Za-z0-9._-]{0,63})\s*\(', line)
+            if match:
+                found.append({'id': match[1], 'name': match[1]})
+    try:
+        agent_dir = Path(env['HOME']) / '.config' / 'opencode' / 'agents'
+        if agent_dir.is_dir():
+            for path in sorted(agent_dir.glob('*.md')):
+                text = path.read_text(encoding='utf-8')
+                match = re.search(r'^name:\s*(.+)$', text, re.M)
+                name = match[1].strip() if match else path.stem
+                if not any(a['id'] == path.stem for a in found):
+                    found.append({'id': path.stem, 'name': name})
+    except OSError:
+        pass
+    return found
 
 def supports_auto_review(provider, help_text):
     section = re.search(r'--permission-mode\b(.*?)(?=\n\s+--|\Z)', help_text, re.S)
@@ -157,6 +195,9 @@ def arguments(provider, binary, config):
     for key in ('model', 'effort', 'sessionId'):
         if config.get(key) and not SAFE.fullmatch(config[key]):
             raise ValueError('잘못된 CLI 옵션입니다: ' + key)
+    agent = str(config.get('agent') or '')
+    if agent and not SAFE.fullmatch(agent):
+        raise ValueError('잘못된 CLI 옵션입니다: agent')
     if provider == 'claude':
         args = [binary, '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
                 '--include-partial-messages', '--tools', '', '--strict-mcp-config', '--mcp-config', '/workspace/mcp.json',
@@ -168,21 +209,34 @@ def arguments(provider, binary, config):
             args += ['--allowedTools', 'mcp__mobile__*']
         if config.get('sessionId'):
             args += ['--resume', config['sessionId']]
-    else:
-        args = [binary, '--input-format', 'stream-json', '--output-format', 'stream-json',
-                '--agent', 'mobile-room', '--disable-slash-commands']
-        if config.get('sessionId'):
-            args += ['--conversation', config['sessionId']]
-    if config.get('model'):
-        args += ['--model', config['model']]
-    if config.get('effort'):
-        args += ['--effort', config['effort']]
+    elif provider == 'opencode':
+        # --format json streams parts; --thinking shows reasoning blocks live.
+        args = [binary, 'run', '--format', 'json', '--thinking', '--auto',
+                '--session', config.get('sessionId') or '']
+        args += ['--model', config.get('model') or '']
+        if agent: args += ['--agent', agent]
+        # --auto auto-approves what opencode can; every mobile_* tool still routes
+        # through the Android host's per-turn approval inside mobile-mcp.py.
+    if provider != 'opencode':
+        if config.get('model'):
+            args += ['--model', config.get('model')]
+        if config.get('effort'):
+            args += ['--effort', config.get('effort')]
     return args
 
 def configure(provider, config, env):
     server = {'command': '/usr/bin/python3', 'args': ['/workspace/mobile-mcp.py', '/workspace/run.json']}
     mcp = {'mcpServers': {} if config.get('mode') == 'chat' else {'mobile': server}}
     write_json(Path('/workspace/mcp.json'), mcp)
+    if provider == 'opencode':
+        # Deny opencode's built-in file/shell tools; agents act only through the
+        # mobile MCP tools the Android host scopes and approves per turn.
+        config_dir = Path(env['HOME']) / '.config' / 'opencode'
+        config_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        write_json(config_dir / 'opencode.json', {
+            'mcp': {'mobile': server},
+            'permission': {'edit': 'deny', 'bash': 'deny', 'webfetch': 'deny', 'external_directory': 'deny'},
+            'autoupdate': False})
     if provider == 'agy':
         # This HOME belongs only to this integration; never rewrite a user's
         # pre-existing Termux/desktop settings or credentials.
@@ -274,25 +328,26 @@ def download_installer(url, installer, env):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('provider', choices=['claude', 'agy'])
+    parser.add_argument('provider', choices=['claude', 'agy', 'opencode'])
     parser.add_argument('action', choices=['probe', 'install', 'login', 'run'])
     args = parser.parse_args()
     env = environment(args.provider)
-    binary = str(Path(env['HOME']) / '.local/bin' / ('claude' if args.provider == 'claude' else 'agy'))
+    binary = str(Path(env['HOME']) / '.local/bin' / ({'claude':'claude','agy':'agy','opencode':'opencode'}[args.provider]))
     if args.action == 'probe':
         emit(kind='probe', **probe(args.provider, binary, env))
     elif args.action == 'install':
-        url = 'https://claude.ai/install.sh' if args.provider == 'claude' else 'https://antigravity.google/cli/install.sh'
+        url = {'claude':'https://claude.ai/install.sh','agy':'https://antigravity.google/cli/install.sh',
+               'opencode':'https://opencode.ai/install'}[args.provider]
         installer = Path('/workspace/official-install.sh')
         download_installer(url, installer, env)
-        # The agy shell bootstrapper accepts --dir/--help only; its native
-        # installer handles interactive shell setup through the same terminal.
+        # OpenCode's official installer is a shell script; agy's bootstrapper takes
+        # --dir/--help only and its native installer handles shell setup in the terminal.
         options = ['stable'] if args.provider == 'claude' else []
         sys.exit(terminal(['/bin/bash', str(installer), *options], env))
     elif args.action == 'login':
-        # agy has no login command: after signing in it stays open as an agent, so the
-        # user ends it with the app's finish button. Never run a second agy alongside it.
-        sys.exit(terminal([binary, 'auth', 'login'] if args.provider == 'claude' else [binary], env))
+        # OpenCode asks the user to pick and log in to a provider in its terminal UI.
+        sys.exit(terminal([binary, 'auth', 'login'] if args.provider == 'claude'
+                          else [binary, 'providers', 'login'] if args.provider == 'opencode' else [binary], env))
     else:
         config = json.loads(Path('/workspace/run.json').read_text(encoding='utf-8'))
         configure(args.provider, config, env)

@@ -6,6 +6,7 @@ import android.content.Intent;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
+import android.os.PowerManager;
 import android.os.SystemClock;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -93,6 +94,19 @@ public final class Engine {
         event(name, data);
         if (name.equals("terminal.state") && !data.optBoolean("running") && !io.isShutdown()) io.execute(this::stopServiceIfIdle);
     });
+    private PowerManager.WakeLock workLock;
+
+    private void holdWorkLock() {
+        if (workLock == null) {
+            workLock = (PowerManager.WakeLock) context.getSystemService(Context.POWER_SERVICE)
+                .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MobileCodex:work");
+            workLock.setReferenceCounted(false);
+        }
+        workLock.acquire();
+    }
+    private void releaseWorkLockIfIdle() {
+        if (workLock != null) { try { workLock.release(); } catch (Exception ignored) {} workLock = null; }
+    }
     private String status = t("시작할 준비가 됐습니다"), threadId = "", turnId = "", serverThreadId = "";
     private JSONObject account = new JSONObject();
     // Unknown is not signed out. Keep startup/refresh mechanics out of the login UI.
@@ -132,6 +146,7 @@ public final class Engine {
         final String id, runId = UUID.randomUUID().toString(), cursorId;
         final JSONObject message;
         String status = "responding";
+        boolean thinkingOpen;
         AgentTurn(String id, JSONObject message, String cursorId) {
             this.id = id; this.message = message; this.cursorId = cursorId;
         }
@@ -818,7 +833,7 @@ public final class Engine {
     }
     private void stopServiceIfIdle() {
         if (roomLeases.isEmpty() && (agentBridge == null || !agentBridge.running()) && !linux.status().optBoolean("busy") && !ready && (process == null || !process.isAlive())
-                && !terminal.busy()) context.stopService(new Intent(context, EngineService.class));
+                && !terminal.busy()) { context.stopService(new Intent(context, EngineService.class)); releaseWorkLockIfIdle(); }
     }
     private void clearRunningState() {
         clearLive("runtimeStopped");
@@ -1702,6 +1717,8 @@ public final class Engine {
         JSONArray input = input(text, attachmentIds, skills, mentions);
         if (input.length() == 0) throw new IOException(t("메시지나 첨부 파일을 추가해 주세요."));
         start();
+        context.startForegroundService(new Intent(context, EngineService.class));
+        holdWorkLock();
         if (account.length() == 0) throw new IOException(t("ChatGPT 계정으로 로그인해 주세요."));
         String actualModel = resolvedModel(model);
         // A supplied value applies to this new turn only. Omission deliberately
@@ -2224,6 +2241,7 @@ public final class Engine {
         // Closing approval first allows a pending action to resolve without changes.
         Approval approval = pendingApproval; if (approval != null) approval.decision.complete(false);
         io.execute(() -> { autoRestorePaused = true; stopNow(); });
+        releaseWorkLockIfIdle();
     }
     /** Stops Codex and the invited-agent runner, including CLI installs and sign-ins. */
     private void stopNow() {
@@ -2293,7 +2311,7 @@ public final class Engine {
                 switch (method) {
                     case "host.launch" -> {
                         String provider=p.getString("provider"),action=p.getString("action");
-                        if(!Set.of("claude","agy").contains(provider)||!Set.of("probe","install","login","run").contains(action))throw new IOException("Invalid provider operation");
+                        if(!Set.of("claude","agy","opencode").contains(provider)||!Set.of("probe","install","login","run").contains(action))throw new IOException("Invalid provider operation");
                         File directory=new File(p.getString("directory")).getCanonicalFile();
                         File allowed=new File(context.getFilesDir(),"rooms/work").getCanonicalFile();
                         if(!directory.toPath().startsWith(allowed.toPath()))throw new IOException("Invalid provider directory");
@@ -2593,8 +2611,10 @@ public final class Engine {
             roomLeases.put(turn.runId, obj("runId", turn.runId, "roomId", run.local, "projectKey", projectKey, "mode", mode,
                 "approvalMode", member.optString("approvalMode", "ask")));
             context.startForegroundService(new Intent(context, EngineService.class));
+            holdWorkLock();
             agentRequest("agents.run", obj("runId", turn.runId, "sessionId", run.local, "memberId", id, "provider", member.optString("provider"),
-                "model", member.optString("model"), "effort", member.optString("effort"), "mode", mode, "projectKey", projectKey,
+                "model", member.optString("model"), "effort", member.optString("effort"), "opencodeAgent", member.optString("opencodeAgent"),
+                "mode", mode, "projectKey", projectKey,
                 "approvalMode", member.optString("approvalMode", "ask"), "nativeSession", member.optString("nativeSession"),
                 "prompt", AgentGroup.agentPrompt(owner, member, run.context)), (result, error) -> {
                     if (error != null) io.execute(() -> agentRunEvent(obj("runId", turn.runId, "kind", "error", "message", unwrap(error).getMessage())));
@@ -2620,9 +2640,23 @@ public final class Engine {
                 case "session" -> { if (member != null) { member.put("nativeSession", data.optString("id")); persist(); } }
                 case "status" -> {
                     if (!Set.of("waiting", "approval").contains(turn.status)) turn.status = "working";
+                    turn.thinkingOpen = false;
                     publish();
                 }
+                case "step":
+                case "thinking" -> {
+                    String delta = data.optString("text"); if (delta.isEmpty()) return;
+                    turn.status = "working";
+                    String line = "thinking".equals(data.optString("kind"))
+                        ? (turn.thinkingOpen ? delta : "\n\n… " + delta)
+                        : "\n\n" + delta;
+                    turn.thinkingOpen = "thinking".equals(data.optString("kind"));
+                    message.put("text", message.optString("text") + line);
+                    if (appendAgentMessage(owner, turn)) { persist(); publish(); }
+                    else if (run.local.equals(threadId)) event("message.delta", obj("threadId", run.local, "id", message.optString("id"), "delta", line));
+                }
                 case "delta" -> {
+                    turn.thinkingOpen = false;
                     String delta = data.optString("text"); if (delta.isEmpty()) return;
                     turn.status = "responding"; message.put("text", message.optString("text") + delta);
                     if (appendAgentMessage(owner, turn)) { persist(); publish(); }
@@ -2783,6 +2817,7 @@ public final class Engine {
         List<String> argv = new ArrayList<>(List.of(builder.environment().get("MC_PYTHON"), helper.getAbsolutePath()));
         argv.addAll(builder.command()); builder.command(argv);
         context.startForegroundService(new Intent(context, EngineService.class));
+        holdWorkLock();
         try { return terminal.start(builder); }
         catch (Exception error) { stopServiceIfIdle(); throw error; }
     }

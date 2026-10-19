@@ -14,13 +14,14 @@ final class AgentGroup {
     private AgentGroup() {}
     static final String CODEX = "codex";
     /** Invitable agents: member id, provider id, display name. */
-    static final List<String[]> AGENTS = List.of(new String[]{"claude", "claude", "Claude"}, new String[]{"gemini", "agy", "Gemini"});
+    static final List<String[]> AGENTS = List.of(new String[]{"claude", "claude", "Claude"}, new String[]{"gemini", "agy", "Gemini"}, new String[]{"opencode", "opencode", "OpenCode"});
     static final Set<String> MODES = Set.of("chat", "read", "write");
     static final int MAX_CONTEXT = 160000;
     private static final Map<String, List<String>> ALIASES = Map.of(
         CODEX, List.of("codex", "코덱스"),
         "claude", List.of("claude", "클로드"),
-        "gemini", List.of("gemini", "agy", "antigravity", "제미나이"));
+        "gemini", List.of("gemini", "agy", "antigravity", "제미나이"),
+        "opencode", List.of("opencode", "오픈코드"));
     private static final List<String> EVERYONE = List.of("all", "everyone", "모두", "전원");
     private static final Pattern MENTION = Pattern.compile("@([\\p{L}\\p{N}_-]+)");
     private static final Pattern CALLER = Pattern.compile("[\\p{L}\\p{N}_@-]");
@@ -182,6 +183,6 @@ final class AgentGroup {
         if (value == null) throw new IllegalArgumentException("Unknown agent");
         if (!MODES.contains(mode)) throw new IllegalArgumentException("Invalid agent permission");
         return obj("id", value[0], "provider", value[1], "name", value[2], "model", model, "effort", effort, "mode", mode,
-            "approvalMode", "ask", "character", "", "enabled", true, "nativeSession", "", "cursorId", "");
+            "approvalMode", "ask", "character", "", "enabled", true, "nativeSession", "", "cursorId", "", "opencodeAgent", "");
     }
 }

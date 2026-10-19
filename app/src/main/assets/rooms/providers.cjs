@@ -54,7 +54,7 @@ function settleOnExit(child) {
 }
 
 class CliProvider {
-  constructor(id,{root,host,emit}) {this.id=id;this.root=root;this.host=host;this.emit=emit;this.sessions=new Map();this.setup=null;this.cap={id,name:id==='agy'?'Antigravity':'Claude Code',state:'unchecked',auth:'unknown',models:[],resume:true,streaming:true,approval:'mobile-mcp',nativeApproval:false};}
+  constructor(id,{root,host,emit}) {this.id=id;this.root=root;this.host=host;this.emit=emit;this.sessions=new Map();this.setup=null;this.cap={id,name:id==='agy'?'Antigravity':id==='opencode'?'OpenCode':'Claude Code',state:'unchecked',auth:'unknown',models:[],resume:true,streaming:true,approval:'mobile-mcp',nativeApproval:false,agents:[]};}
   async launch(action,config={},key='setup') {
     if(this.disposed)throw new Error('공급자 연결이 종료되었습니다.');
     const dir=path.join(this.root,'work',this.id,key);fs.mkdirSync(dir,{recursive:true,mode:0o700});
@@ -118,6 +118,7 @@ class CliProvider {
   }
   async setupStop() {const child=this.setup;this.setup=null;await terminate(child);return {ok:true};}
   async run(input) {
+    if(this.id==='opencode')return this.runTurn(input);
     const {room,member,signal}=input, key=room.id+'-'+member.id;
     const signatureFor=id=>JSON.stringify([room.mode,room.projectKey,member.model,member.effort,member.approvalMode||'ask',id]);
     const signature=signatureFor(member.session.id);
@@ -172,6 +173,71 @@ class CliProvider {
       const data=this.id==='claude'?{type:'user',message:{role:'user',content:input.prompt}}:{event:'user',message:{content:input.prompt}};
       s.child.stdin.write(JSON.stringify(data)+'\n',error=>{if(error)finish(error);});
     });
+  }
+  /**
+   * OpenCode has no long-lived stdin protocol: every turn is one `opencode run`
+   * process that exits with its answer. The session id keeps the conversation.
+   * Text, reasoning and tool calls stream as JSON parts on stdout.
+   */
+  async runTurn(input) {
+    const {room,member,signal}=input, key=room.id+'-'+member.id;
+    let s=this.sessions.get(key);
+    if(s?.ending||s?.turn?.signal.aborted){await this.end(s);s=null;}
+    if(s?.turn)throw new Error('이 참가자가 이미 답하고 있습니다. 먼저 중지해 주세요.');
+    if(s){clearTimeout(s.idleTimer);s.idleTimer=null;}
+    if(signal.aborted)throw new Error('발언이 중지되었습니다.');
+    if(!s){
+      if(this.sessions.size>=2){const idle=[...this.sessions.values()].find(value=>!value.turn);if(idle)await this.end(idle);}
+      s={key,turn:null,token:randomBytes(32).toString('hex'),server:null,child:null,sessionId:member.session.id||'',parts:new Map()};
+      this.sessions.set(key,s);
+    }
+    if(room.mode!=='chat'){
+      s.server=http.createServer((req,res)=>this.mcp(s,req,res));
+      await new Promise((resolve,reject)=>{s.server.once('error',reject);s.server.listen(0,'127.0.0.1',resolve);});
+    }
+    // The turn is installed before the process starts so no early part is dropped.
+    const turn={...input,text:''};
+    const done=new Promise((resolve,reject)=>{turn.resolve=resolve;turn.reject=reject;});
+    done.catch(()=>{}); // A failed launch rejects before anyone is waiting on it.
+    let settled=false;
+    const finish=(error,value)=>{if(settled)return;settled=true;clearTimeout(timer);signal.removeEventListener('abort',cancel);s.turn=null;
+      if(!error)s.idleTimer=setTimeout(()=>this.end(s),300000).unref();error?reject(error):resolve(value);};
+    const cancel=()=>this.end(s).then(()=>finish(new Error('발언이 중지되었습니다.')));
+    const timer=setTimeout(()=>this.end(s).then(()=>finish(new Error('응답 시간이 10분을 초과했습니다.'))),600000);
+    turn.resolve=value=>finish(null,value); turn.reject=error=>finish(error);
+    s.turn=turn;
+    signal.addEventListener('abort',cancel,{once:true});
+    try {
+      const config={sessionId:s.sessionId,model:member.model,effort:member.effort,mode:room.mode,
+        approvalMode:member.approvalMode||'ask',agent:String(member.opencodeAgent||'')};
+      if(s.server)config.mcp={port:s.server.address().port,token:s.token};
+      s.child=await this.launch('run',config,key);
+    } catch(error) {
+      signal.removeEventListener('abort',cancel);finish(error);s.server?.close();
+      if(this.sessions.get(key)===s)this.sessions.delete(key);
+      throw error;
+    }
+    lines(s.child.stdout,e=>{
+      if(!s.turn)return;
+      if(e.kind==='runtime-error'){s.turn.reject(new Error(e.message));return;}
+      for(const n of normalize(this.id,e,s.parts)) {
+        if(n.kind==='session'){s.sessionId=n.id;s.turn.event(n);}
+        else if(n.kind==='delta'){s.turn.text+=n.text;s.turn.event(n);}
+        else s.turn.event(n);
+      }
+    },error=>{s.turn?.reject(error);terminate(s.child);});
+    s.child.stderr.resume(); // Credentials and raw diagnostics never enter history.
+    s.child.stdin.on('error',()=>{});
+    s.child.once('error',e=>s.turn?.reject(new Error('OpenCode를 실행하지 못했습니다: '+e.message)));
+    s.child.once('close',code=>{
+      const live=s.turn,sessionId=s.sessionId;
+      s.server?.close();
+      if(this.sessions.get(key)===s&&!live)this.sessions.delete(key);
+      if(!live)return;
+      if(code===0)live.resolve({text:live.text,sessionId});
+      else live.reject(new Error('OpenCode가 종료되었습니다 ('+code+'). 준비 상태와 로그인을 확인해 주세요.'));
+    });
+    return done;
   }
   async mcp(s,req,res) {
     let body='';req.on('data',d=>{body+=d;if(body.length>limit)req.destroy();});
