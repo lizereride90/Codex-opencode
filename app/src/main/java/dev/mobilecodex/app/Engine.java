@@ -274,6 +274,7 @@ public final class Engine {
             "turnDiff", active == null ? "" : active.optString("turnDiff"), "messages", snapshotMessages(),
             "messageHistory", messageHistory(active == null ? null : active.optJSONArray("messages"), snapshotMessageStart()),
             "fastMode", active != null && active.optBoolean("fastMode"),
+            "mainAgent", active == null ? "codex" : AgentGroup.mainAgent(active),
             "agents", agentsView(), "agentProviders", uiJsonCopy(agentProviders), "agentRun", agentRunView(),
             "pendingDeletionCount", pendingDeletionCount(), "devtools", devTools.status(), "linux", linux.status(),
             "phone", PhoneUseService.status(context), "phoneToolsAvailable", active == null || active.optInt("phoneToolsVersion") >= 1,
@@ -741,6 +742,13 @@ public final class Engine {
                     }
                     case "chat.resume" -> { resume(args.getString("id")); draftAgents = new JSONArray(); reply.complete(snapshot(), null); }
                     case "chat.agents.set" -> { setAgents(args.optJSONArray("agents")); reply.complete(snapshot(), null); }
+                    case "chat.mainAgent.set" -> {
+                        String id = args.optString("id", "");
+                        if (!AgentGroup.isMain(id)) throw new IOException(t("지원하지 않는 주요 에이전트입니다."));
+                        if (active == null) throw new IOException(t("대화가 없습니다."));
+                        AgentGroup.setMainAgent(active, id); persist(); publish();
+                        reply.complete(snapshot(), null);
+                    }
                     case "chat.rename" -> { renameSession(args.getString("id"), args.getString("title")); publish(); reply.complete(snapshot(), null); }
                     case "chat.delete" -> {
                         boolean deletionPending = deleteSession(args.getString("id"));
@@ -1746,6 +1754,25 @@ public final class Engine {
         JSONObject owner = candidate == null ? active : candidate;
         if (candidate != null && draftAgents.length() > 0) candidate.put("agents", new JSONArray(draftAgents.toString()));
         List<String> targets = AgentGroup.grouped(owner) ? AgentGroup.targets(text, owner) : List.of(AgentGroup.CODEX);
+        String main = AgentGroup.mainAgent(owner);
+        if ("opencode".equals(main)) {
+            // OpenCode owns this conversation as the main responder: the user turn goes to OpenCode,
+            // invited agents join as participants; Codex's thread is not used for this turn.
+            JSONObject opencodeMember = AgentGroup.member(owner, "opencode");
+            if (opencodeMember == null || !opencodeMember.optBoolean("enabled", true))
+                throw new IOException(t("대화에 OpenCode가 참여 중이지 않습니다. 참가자에서 OpenCode를 추가해 주세요."));
+            List<String> withMain = new ArrayList<>(); withMain.add("opencode");
+            for (String id : targets) if (!id.equals("opencode")) withMain.add(id);
+            targets = withMain;
+            if (candidate != null) { threadId = candidateLocalId; active = candidate; serverThreadId = ""; sessions.put(active); }
+            active.getJSONArray("messages").put(userMessage(text, attachmentIds, skills, mentions));
+            draftAgents = new JSONArray();
+            GroupRun run = new GroupRun(threadId); run.model = actualModel; run.effort = effort;
+            run.current = "opencode"; run.codexRunning = false;
+            run.context = new JSONArray(active.getJSONArray("messages").toString());
+            for (String id : targets) if (!id.equals("opencode")) run.queue.add(id);
+            group = run; persist(); publish(); advanceGroup(run); return;
+        }
         if (!targets.contains(AgentGroup.CODEX)) {
             // Only invited agents were called; Codex reads this message on its next turn.
             if (candidate != null) { active = candidate; threadId = candidateLocalId; serverThreadId = candidateRemoteId; sessions.put(active); }

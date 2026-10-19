@@ -2220,6 +2220,7 @@
    const closeToolMenu = () => { if ($('tool-menu-dialog').open) close('tool-menu-dialog'); };
    setFilePanelOpen(false);
    ['files-toggle'].forEach(id => on(id, async () => { closeToolMenu(); setFilePanelOpen($('file-panel').hidden); sidebar(false); if (!$('file-panel').hidden) await listFiles(); }));
+  on('main-agent', async () => { const label = $('main-agent-label'); const next = String(label.textContent).includes('OpenCode') ? 'codex' : 'opencode'; try { await call('chat.mainAgent.set', {id: next}); } catch (error) { toast(error.message); return; } label.textContent = next === 'opencode' ? 'OpenCode' : 'Codex'; });
   on('chat-terminal', async () => { const d = $('terminal-dialog'); d.classList.add('terminal-fullscreen'); closeToolMenu(); show('terminal-dialog'); sidebar(false); renderTerminal(await call('terminal.state')); });
   on('terminal-back', () => { const d = $('terminal-dialog'); d.classList.remove('terminal-fullscreen'); close('terminal-dialog'); });
   on('file-close', () => setFilePanelOpen(false)); on('file-up', async () => { folder = C.parent(folder); await listFiles(); });

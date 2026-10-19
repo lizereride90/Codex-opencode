@@ -16,6 +16,8 @@ final class AgentGroup {
     /** Invitable agents: member id, provider id, display name. */
     static final List<String[]> AGENTS = List.of(new String[]{"claude", "claude", "Claude"}, new String[]{"gemini", "agy", "Gemini"}, new String[]{"opencode", "opencode", "OpenCode"});
     static final Set<String> MODES = Set.of("chat", "read", "write");
+    /** Agents that can own a conversation as the primary responder instead of Codex. */
+    static final Set<String> MAIN_AGENTS = Set.of("codex", "opencode");
     static final int MAX_CONTEXT = 160000;
     private static final Map<String, List<String>> ALIASES = Map.of(
         CODEX, List.of("codex", "코덱스"),
@@ -32,6 +34,21 @@ final class AgentGroup {
         return null;
     }
     static String name(String id) { if (CODEX.equals(id)) return "Codex"; String[] value = agent(id); return value == null ? id : value[2]; }
+
+    /** The agent that owns this conversation as the primary responder ("codex" by default). */
+    static String mainAgent(JSONObject session) {
+        String value = session == null ? "" : session.optString("mainAgent", CODEX);
+        if (!MAIN_AGENTS.contains(value)) return CODEX;
+        return value;
+    }
+    static boolean isMain(String id) { return MAIN_AGENTS.contains(id); }
+    /** Picks the main agent for a new or existing session; OpenCode must be enabled and ready. */
+    static JSONObject setMainAgent(JSONObject session, String id) throws Exception {
+        if (!MAIN_AGENTS.contains(id)) throw new IllegalArgumentException("Unknown main agent");
+        if (id.equals("opencode") && agent("opencode") == null) throw new IllegalArgumentException("Unknown agent");
+        session.put("mainAgent", id);
+        return session;
+    }
 
     /** Enabled agents in invitation order. */
     static List<JSONObject> enabled(JSONObject session) {
@@ -162,7 +179,8 @@ final class AgentGroup {
             default -> "파일이나 휴대폰 도구는 사용할 수 없습니다. 대화로만 답하세요.";
         };
         String header = "당신은 Mobile Codex 그룹 대화의 @" + id + " (" + name(id) + ")입니다. 다른 참가자: " + roster(session, id) + ".\n"
-            + access + " 공유된 대화 기록을 읽고 답하세요. 같은 질문에 다른 참가자도 동시에 답할 수 있습니다. 다른 참가자 의견이 꼭 필요할 때만 독립된 @ID로 호출하세요. "
+            + access + " 먼저 이 작업을 읽고, 어떤 참가자가 어떤 부분을 맡을지 ruolo를 정하세요. 같은 질문에 모두가 같은 답을 반복하지 말고, 각자 맡은 분량을 맡아 답하세요. "
+            + "다른 참가자가 먼저 답했다면, 그 내용을 보완하거나 확정만 하세요. 다른 참가자 의견이 필요할 때만 독립된 @ID로 부르고, 그 답변을 기다린 뒤 이어서 답하세요. "
             + "@file:경로, @app:이름은 참가자 호출이 아닙니다. 도구 결과 없이 작업 성공을 주장하지 마세요.\n";
         Set<String> known = new HashSet<>();
         if (!member.optString("nativeSession").isBlank()) for (int i = from; i < messages.length(); i++) {
