@@ -92,6 +92,9 @@ def main():
     try:
         raw = os.environ.get(SECRET_NAME, '')
         if args.check_config:
+            if not raw:
+                print('Warning: MOBILE_CODEX_SIGNING_JSON is not configured; the debug APK will be built unsigned and cannot be published as an update.')
+                return
             read_credentials(raw)
             print('Signing secret is configured.')
         else:

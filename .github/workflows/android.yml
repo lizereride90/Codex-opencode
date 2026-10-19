@@ -86,7 +86,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Require the original signing key for update builds
-        if: github.event_name != 'pull_request' || env.PRIVATE_TEST_PR == 'true'
+        if: (github.event_name != 'pull_request' || env.PRIVATE_TEST_PR == 'true') && env.MOBILE_CODEX_SIGNING_JSON != ''
         env:
           MOBILE_CODEX_SIGNING_JSON: ${{ secrets.MOBILE_CODEX_SIGNING_JSON }}
         run: python3 tools/sign_ci_apk.py --check-config
@@ -156,7 +156,7 @@ jobs:
         if: ${{ inputs.apk_only || needs.checks.outputs.tested == 'true' }}
         run: ./gradlew --no-daemon --build-cache assembleDebug
       - name: Sign APK with the original installation key
-        if: github.event_name != 'pull_request' || env.PRIVATE_TEST_PR == 'true'
+        if: (github.event_name != 'pull_request' || env.PRIVATE_TEST_PR == 'true') && env.MOBILE_CODEX_SIGNING_JSON != ''
         env:
           MOBILE_CODEX_SIGNING_JSON: ${{ secrets.MOBILE_CODEX_SIGNING_JSON }}
         run: python3 tools/sign_ci_apk.py --build-tools "$ANDROID_HOME/build-tools/35.0.0"
