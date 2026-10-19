@@ -10,7 +10,7 @@ import re
 import subprocess
 import tempfile
 
-EXPECTED_CERT_SHA256 = None
+EXPECTED_CERT_SHA256 = os.environ.get('MOBILE_CODEX_EXPECTED_CERT_SHA256') or 'f9a8d59abf5ab33b44879ade1b9500c385b2cf03e1cb17f94936eadb85337bd7'
 SECRET_NAME = 'MOBILE_CODEX_SIGNING_JSON'
 
 
